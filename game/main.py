@@ -3,90 +3,41 @@ import random
 import math
 from .settings import WIDTH, HEIGHT, FPS
 from .player import Player
-from .enemy import Enemy, RotorSound, Bullet, generate_explosion_sound, generate_bullet_fire_sound
+from .enemy import EnemyHelicopter, generate_rotor_sound, generate_bullet_fire_sound, generate_explosion_sound, generate_crash_sound
 from .leaderboard import add_score, load_leaderboard
+from .menu import draw_main_menu
+from .ui import show_settings_screen
+from .gameover import show_score_entry_screen
+from .world import draw_ground_and_trees, draw_radar
+from .pausemenu import draw_pause_menu
 
 def run():
     pygame.init()
     font = pygame.font.SysFont(None, 36)
-    explosion_sound = generate_explosion_sound()
-    bullet_fire_sound = generate_bullet_fire_sound()
-
-    def show_settings_screen(settings):
-        screen = pygame.display.set_mode((settings["WIDTH"], settings["HEIGHT"]))
-        fullscreen_rect = pygame.Rect(settings["WIDTH"] // 2 - 100, settings["HEIGHT"] // 2 - 40, 200, 50)
-        save_rect = pygame.Rect(settings["WIDTH"] // 2 - 100, settings["HEIGHT"] // 2 + 30, 200, 50)
-        running = True
-        settings_clock = pygame.time.Clock()
-        while running:
-            screen.fill((30, 30, 30))
-            title = font.render("Settings", True, (255, 255, 255))
-            screen.blit(title, (settings["WIDTH"] // 2 - title.get_width() // 2, 80))
-            # Fullscreen toggle
-            fs_val = settings.get('FULLSCREEN', False)
-            fs_text = f"Fullscreen: {'ON' if fs_val else 'OFF'}"
-            fs_render = font.render(fs_text, True, (255, 255, 0))
-            pygame.draw.rect(screen, (60, 60, 60), fullscreen_rect, border_radius=8)
-            screen.blit(fs_render, (fullscreen_rect.centerx - fs_render.get_width() // 2, fullscreen_rect.centery - fs_render.get_height() // 2))
-            # Save button
-            pygame.draw.rect(screen, (0, 120, 0), save_rect, border_radius=8)
-            save_text = font.render("Save & Back", True, (255, 255, 255))
-            screen.blit(save_text, (save_rect.centerx - save_text.get_width() // 2, save_rect.centery - save_text.get_height() // 2))
-            pygame.display.flip()
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    exit()
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if fullscreen_rect.collidepoint(event.pos):
-                        settings["FULLSCREEN"] = not settings.get("FULLSCREEN", False)
-                    if save_rect.collidepoint(event.pos):
-                        save_settings(settings)
-                        return settings
-            settings_clock.tick(30)
-        return settings
 
     while True:
+        # --- SETTINGS & SCREEN INIT ---
         from .settings import load_settings, save_settings
         settings = load_settings()
-        # If fullscreen, get current display size
         if settings.get("FULLSCREEN"):
             info = pygame.display.Info()
             settings["WIDTH"], settings["HEIGHT"] = info.current_w, info.current_h
-            # Update settings.json so all modules use the new size
             save_settings(settings)
         WIDTH, HEIGHT, FPS = settings["WIDTH"], settings["HEIGHT"], settings["FPS"]
         flags = pygame.FULLSCREEN if settings.get("FULLSCREEN") else 0
         screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
         font = pygame.font.SysFont(None, 36)
-        # Start screen loop
+
+        # --- UI BUTTONS ---
         button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2, 200, 60)
         settings_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 80, 200, 50)
         quit_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 160, 200, 50)
         waiting = True
         settings_clock = pygame.time.Clock()
+        # --- Prevent sound effects on start screen ---
+        pygame.mixer.stop()
         while waiting:
-            screen.fill((34, 139, 34))
-            title_text = font.render("Helicopter Game", True, (255, 255, 255))
-            screen.blit(title_text, (WIDTH // 2 - title_text.get_width() // 2, HEIGHT // 2 - 100))
-            # Leaderboard display in a column to the right of the buttons
-            leaderboard = load_leaderboard()
-            lb_x = WIDTH // 2 + 220
-            lb_y = HEIGHT // 2 - 100
-            lb_title = font.render("Leaderboard", True, (255, 255, 0))
-            screen.blit(lb_title, (lb_x, lb_y))
-            for i, entry in enumerate(leaderboard[:10]):
-                entry_text = font.render(f"{i+1}. {entry['name']} - {entry['score']}", True, (255, 255, 255))
-                screen.blit(entry_text, (lb_x, lb_y + 40 + i * 28))
-            pygame.draw.rect(screen, (0, 100, 0), button_rect, border_radius=10)
-            button_text = font.render("START", True, (255, 255, 0))
-            screen.blit(button_text, (button_rect.centerx - button_text.get_width() // 2, button_rect.centery - button_text.get_height() // 2))
-            pygame.draw.rect(screen, (60, 60, 60), settings_rect, border_radius=8)
-            settings_text = font.render("SETTINGS", True, (255, 255, 255))
-            screen.blit(settings_text, (settings_rect.centerx - settings_text.get_width() // 2, settings_rect.centery - settings_text.get_height() // 2))
-            pygame.draw.rect(screen, (120, 0, 0), quit_rect, border_radius=8)
-            quit_text = font.render("QUIT", True, (255, 255, 255))
-            screen.blit(quit_text, (quit_rect.centerx - quit_text.get_width() // 2, quit_rect.centery - quit_text.get_height() // 2))
+            draw_main_menu(screen, font, WIDTH, HEIGHT, button_rect, settings_rect, quit_rect, load_leaderboard)
             pygame.display.flip()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -96,8 +47,7 @@ def run():
                     if button_rect.collidepoint(event.pos):
                         waiting = False
                     if settings_rect.collidepoint(event.pos):
-                        settings = show_settings_screen(settings)
-                        # Recreate screen with new settings
+                        settings = show_settings_screen(screen, font, settings, save_settings)
                         flags = pygame.FULLSCREEN if settings.get("FULLSCREEN") else 0
                         screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
                         font = pygame.font.SysFont(None, 36)
@@ -106,27 +56,23 @@ def run():
                         return
             settings_clock.tick(30)
 
-        # Game setup
+        # --- GAME SETUP ---
         player = Player(WIDTH // 2, HEIGHT // 2)
-        # RotorSound: pass a lambda that returns a rotor_speed that increases with motion
+        player.world_x = 0
+        player.world_y = 0
         def get_dynamic_rotor_speed():
-            # Use a much higher multiplier for speed to make the whump rate very sensitive to motion
-            # Also, add a minimum base value so even small speeds have an effect
             return player.rotor_speed + max(0.1, abs(player.speed)) * 120
-        rotor_sound = RotorSound(get_dynamic_rotor_speed)
-        all_sprites = pygame.sprite.Group(player)
-        enemies = pygame.sprite.Group()
-        bullets = pygame.sprite.Group()
-        for _ in range(5):
-            enemy = Enemy(WIDTH, HEIGHT)
-            all_sprites.add(enemy)
-            enemies.add(enemy)
+        rotor_sound = generate_rotor_sound(get_dynamic_rotor_speed)
+        bullet_fire_sound = generate_bullet_fire_sound()
+        explosion_sound = generate_explosion_sound()
+        crash_sound = generate_crash_sound()
+        enemy_heli = EnemyHelicopter(player.world_x, player.world_y)
+        bullets = []
         rotor_sound.play()
         running = True
         score = 0
         game_over = False
         name = ""
-        name_entered = False
         show_gameover_menu = False
         play_again_rect = pygame.Rect(WIDTH // 2 - 180, HEIGHT // 2 + 100, 110, 50)
         to_start_rect = pygame.Rect(WIDTH // 2 - 55, HEIGHT // 2 + 100, 110, 50)
@@ -137,44 +83,13 @@ def run():
         pause_rect_quit_start = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 20, 200, 50)
         pause_rect_quit_desktop = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 90, 200, 50)
 
-        def show_score_entry_screen(score):
-            name = ""
-            name_entered = False
-            entry_clock = pygame.time.Clock()
-            entry_running = True
-            while entry_running:
-                screen.fill((34, 139, 34))
-                over_text = font.render("GAME OVER", True, (255, 0, 0))
-                screen.blit(over_text, (WIDTH // 2 - over_text.get_width() // 2, HEIGHT // 2 - 120))
-                score_text = font.render(f"Score: {score}", True, (255, 255, 255))
-                screen.blit(score_text, (WIDTH // 2 - score_text.get_width() // 2, HEIGHT // 2 - 60))
-                prompt_text = font.render("Enter your name (optional):", True, (255, 255, 255))
-                screen.blit(prompt_text, (WIDTH // 2 - prompt_text.get_width() // 2, HEIGHT // 2 - 10))
-                name_text = font.render(name + ("_" if pygame.time.get_ticks() // 500 % 2 == 0 else ""), True, (255, 255, 0))
-                screen.blit(name_text, (WIDTH // 2 - name_text.get_width() // 2, HEIGHT // 2 + 30))
-                enter_text = font.render("Press Enter to submit", True, (200, 200, 200))
-                screen.blit(enter_text, (WIDTH // 2 - enter_text.get_width() // 2, HEIGHT // 2 + 70))
-                pygame.display.flip()
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        exit()
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_RETURN:
-                            entry_running = False
-                        elif event.key == pygame.K_BACKSPACE:
-                            name = name[:-1]
-                        elif event.unicode.isprintable() and len(name) < 12:
-                            name += event.unicode
-                entry_clock.tick(30)
-            return name
-
         game_clock = pygame.time.Clock()
-        camera_x = 0
-        camera_y = 0
+        camera_x = player.world_x
+        camera_y = player.world_y
+        # --- Add this flag for in-game restart ---
+        in_game_restart = False
         while running:
             game_clock.tick(FPS)
-            # Remove: if not game_over: score += 1
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -184,31 +99,37 @@ def run():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and not game_over:
                     paused = not paused
                     if paused:
-                        rotor_sound.stop()
                         pygame.mixer.stop()  # Stop all sound effects
-                    else:
-                        rotor_sound.play()
                 if paused:
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         if pause_rect_resume.collidepoint(event.pos):
                             paused = False
-                            rotor_sound.play()
                         elif pause_rect_restart.collidepoint(event.pos):
-                            running = False  # break to outer loop to restart
+                            # --- In-game restart: reset all game state, but do not break to menu ---
+                            player = Player(WIDTH // 2, HEIGHT // 2)
+                            player.world_x = 0
+                            player.world_y = 0
+                            enemy_heli = EnemyHelicopter(player.world_x, player.world_y)
+                            bullets = []
+                            score = 0
+                            game_over = False
+                            name = ""
+                            show_gameover_menu = False
                             paused = False
-                            break
+                            camera_x = player.world_x
+                            camera_y = player.world_y
+                            continue  # Resume game immediately
                         elif pause_rect_quit_start.collidepoint(event.pos):
-                            # Return to start screen
                             running = False
-                            paused = False
                             break
                         elif pause_rect_quit_desktop.collidepoint(event.pos):
                             pygame.quit()
                             return
                     continue  # Don't process other events while paused
                 if game_over and not show_gameover_menu and event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_RETURN and name_entered:
-                        add_score(name, score)
+                    # Remove name_entered check, just allow Enter to submit
+                    if event.key == pygame.K_RETURN:
+                        add_score(name if name.strip() else "Anonymous", score)
                         show_gameover_menu = True
                     elif event.key == pygame.K_BACKSPACE:
                         name = name[:-1]
@@ -224,105 +145,144 @@ def run():
                         return
                 if not game_over and event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
-                        # Fire bullet from front of helicopter in facing direction
                         bullet_length = player.player_width // 2
                         rad = math.radians(player.angle)
-                        bullet_x = player.pos.x + math.cos(rad) * bullet_length
-                        bullet_y = player.pos.y - math.sin(rad) * bullet_length
-                        bullet = Bullet(bullet_x, bullet_y, WIDTH, player.angle)
-                        bullets.add(bullet)
-                        all_sprites.add(bullet)
+                        world_bullet_x = player.world_x + math.cos(rad) * bullet_length
+                        world_bullet_y = player.world_y - math.sin(rad) * bullet_length
+                        # Create a player bullet as a simple dict/object
+                        bullet = type('PlayerBullet', (), {})()
+                        bullet.length = 16
+                        bullet.width = 4
+                        base_image = pygame.Surface((bullet.length, bullet.width), pygame.SRCALPHA)
+                        pygame.draw.rect(base_image, (255, 255, 0), (0, 0, bullet.length, bullet.width), border_radius=2)
+                        bullet.image = pygame.transform.rotate(base_image, player.angle)
+                        bullet.rect = bullet.image.get_rect(center=(world_bullet_x, world_bullet_y))
+                        bullet.angle = player.angle
+                        bullet.speed = 16
+                        rad = math.radians(bullet.angle)
+                        bullet.vx = math.cos(rad) * bullet.speed
+                        bullet.vy = -math.sin(rad) * bullet.speed
+                        bullet.world_x = world_bullet_x
+                        bullet.world_y = world_bullet_y
+                        bullet.get_world_rect = lambda b=bullet: pygame.Rect(b.world_x - b.length // 2, b.world_y - b.width // 2, b.length, b.width)
+                        bullet.update = lambda b=bullet: (setattr(b, 'world_x', b.world_x + b.vx), setattr(b, 'world_y', b.world_y + b.vy))
+                        bullet.draw = lambda screen, camera_x, camera_y, WIDTH, HEIGHT, b=bullet: screen.blit(b.image, b.image.get_rect(center=(int(b.world_x - camera_x + WIDTH // 2), int(b.world_y - camera_y + HEIGHT // 2))))
+                        bullets.append(bullet)
                         bullet_fire_sound.play()
+        # --- Update rotor sound pitch based on player speed ---
+            rotor_sound.set_volume(min(1.0, max(0.0, player.speed / player.max_speed)))
+            rotor_sound.set_pitch(1.0 + player.speed / player.max_speed * 2.0)
 
             if paused:
-                # Draw pause menu
-                overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 180))
-                screen.blit(overlay, (0, 0))
-                pause_text = font.render("PAUSED", True, (255, 255, 0))
-                screen.blit(pause_text, (WIDTH // 2 - pause_text.get_width() // 2, HEIGHT // 2 - 180))
-                pygame.draw.rect(screen, (0, 120, 0), pause_rect_resume, border_radius=10)
-                pygame.draw.rect(screen, (0, 100, 200), pause_rect_restart, border_radius=10)
-                pygame.draw.rect(screen, (120, 120, 0), pause_rect_quit_start, border_radius=10)
-                pygame.draw.rect(screen, (120, 0, 0), pause_rect_quit_desktop, border_radius=10)
-                resume_text = font.render("Resume", True, (255, 255, 255))
-                restart_text = font.render("Restart", True, (255, 255, 255))
-                main_menu_text = font.render("Main Menu", True, (255, 255, 255))
-                quit_desktop_text = font.render("Quit to Desktop", True, (255, 255, 255))
-                screen.blit(resume_text, (pause_rect_resume.centerx - resume_text.get_width() // 2, pause_rect_resume.centery - resume_text.get_height() // 2))
-                screen.blit(restart_text, (pause_rect_restart.centerx - restart_text.get_width() // 2, pause_rect_restart.centery - restart_text.get_height() // 2))
-                screen.blit(main_menu_text, (pause_rect_quit_start.centerx - main_menu_text.get_width() // 2, pause_rect_quit_start.centery - main_menu_text.get_height() // 2))
-                screen.blit(quit_desktop_text, (pause_rect_quit_desktop.centerx - quit_desktop_text.get_width() // 2, pause_rect_quit_desktop.centery - quit_desktop_text.get_height() // 2))
+                draw_pause_menu(screen, font, WIDTH, HEIGHT, pause_rect_resume, pause_rect_restart, pause_rect_quit_start, pause_rect_quit_desktop)
                 pygame.display.flip()
                 continue  # Skip game update/draw while paused
 
             if not game_over:
                 keys = pygame.key.get_pressed()
-                # Save old camera position
-                old_camera_x, old_camera_y = camera_x, camera_y
-                # Calculate intended movement
-                prev_pos = player.pos.copy()
-                player.update(keys)
-                # The difference in player position is the world movement
-                dx = player.pos.x - prev_pos.x
-                dy = player.pos.y - prev_pos.y
-                # Move camera instead of player
-                camera_x += dx
-                camera_y += dy
-                # Keep player visually centered
-                player.pos.x = WIDTH // 2
-                player.pos.y = HEIGHT // 2
-                # Move all enemies and bullets by (-dx, -dy)
-                for enemy in enemies:
-                    enemy.rect.x -= dx
-                    enemy.rect.y -= dy
-                for bullet in bullets:
-                    bullet.rect.x -= dx
-                    bullet.rect.y -= dy
-                enemies.update()
-                bullets.update()
-                rotor_sound.update()
-                # Bullet-enemy collision
-                hits = pygame.sprite.groupcollide(enemies, bullets, True, True)
-                for _ in hits:
-                    explosion_sound.play()
-                    # Spawn a new enemy for each destroyed
-                    enemy = Enemy(WIDTH, HEIGHT)
-                    all_sprites.add(enemy)
-                    enemies.add(enemy)
-                    score += 1  # Increase score only when an enemy is destroyed
-                # Use player.body_rect for collision, not player.rect
-                collided = False
-                for enemy in enemies:
-                    if player.body_rect.colliderect(enemy.rect):
-                        collided = True
-                        break
-                if collided:
+                # Only update player.world_x/world_y by input
+                prev_world_x = player.world_x
+                prev_world_y = player.world_y
+                # Calculate movement from input (copy from Player.update, but don't move player.pos)
+                move = 0
+                if keys[pygame.K_UP] or keys[pygame.K_w]:
+                    move = 1
+                if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+                    move = -1
+                if move != 0:
+                    player.speed += player.acceleration * move
+                else:
+                    player.speed *= 0.92
+                if player.speed > player.max_speed:
+                    player.speed = player.max_speed
+                if player.speed < -player.max_speed:
+                    player.speed = -player.max_speed
+                # Rotation
+                if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+                    player.angle += player.rotation_speed
+                if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+                    player.angle -= player.rotation_speed
+                rad = math.radians(player.angle)
+                dx = math.cos(rad) * player.speed
+                dy = -math.sin(rad) * player.speed
+                player.world_x += dx
+                player.world_y += dy
+                # Camera always follows player
+                camera_x = player.world_x
+                camera_y = player.world_y
+                # Animate rotor and update image
+                player.rotor_angle = (player.rotor_angle + player.rotor_speed) % 360
+                player.image = player.body_image.copy()
+                center = (player.rotor_diameter // 2, player.rotor_diameter // 2)
+                blade_length = int(player.rotor_radius * 0.95)
+                blade_width = 8
+                blade_color = (60, 60, 60, 180)
+                for i in range(3):
+                    angle = player.rotor_angle + i * 120
+                    rad_blade = math.radians(angle)
+                    x2 = center[0] + math.cos(rad_blade) * blade_length
+                    y2 = center[1] + math.sin(rad_blade) * blade_length
+                    pygame.draw.line(player.image, blade_color, center, (x2, y2), blade_width)
+                player.image = pygame.transform.rotate(player.image, player.angle)
+                player.rect = player.image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+                # Update bullets in world space
+                for bullet in bullets[:]:
+                    bullet.update()
+                    screen_x = bullet.world_x - camera_x + WIDTH // 2
+                    screen_y = bullet.world_y - camera_y + HEIGHT // 2
+                    if (
+                        screen_x < -100 or screen_x > WIDTH + 100 or
+                        screen_y < -100 or screen_y > HEIGHT + 100
+                    ):
+                        bullets.remove(bullet)
+                # Update enemy helicopter
+                enemy_heli.update(player.world_x, player.world_y)
+            # Bullet-enemy collision (player bullets hit enemy heli)
+            hits = []
+            for bullet in bullets[:]:
+                if enemy_heli.get_world_rect().colliderect(bullet.get_world_rect()):
+                    hits.append(bullet)
+            for bullet in hits:
+                bullets.remove(bullet)
+                score += 1  # Score for hitting enemy heli
+                explosion_sound.play()  # Play explosion on bullet hit
+            # Enemy bullet hits player
+            player_rect = pygame.Rect(player.world_x - player.player_width // 2, player.world_y - player.player_height // 2, player.player_width, player.player_height)
+            for bullet in enemy_heli.bullets[:]:
+                if player_rect.colliderect(bullet.get_world_rect()):
                     game_over = True
                     rotor_sound.stop()
+                    crash_sound.play()  # Play crash sound on collision
                     show_gameover_menu = False
-
-            # Draw grass tiles as green rectangles
-            tile_size = 64
-            grass_color = (34, 139, 34)
-            for x in range(-tile_size, WIDTH + tile_size, tile_size):
-                for y in range(-tile_size, HEIGHT + tile_size, tile_size):
-                    world_x = x + (camera_x % tile_size) - tile_size
-                    world_y = y + (camera_y % tile_size) - tile_size
-                    pygame.draw.rect(screen, grass_color, (world_x, world_y, tile_size, tile_size))
-
-            all_sprites.draw(screen)
-
+            # Enemy heli collides with player
+            if player_rect.colliderect(enemy_heli.get_world_rect()):
+                game_over = True
+                rotor_sound.stop()
+                crash_sound.play()  # Play crash sound on collision
+                show_gameover_menu = False
+            # Draw ground and trees (world background)
+            draw_ground_and_trees(screen, camera_x, camera_y, WIDTH, HEIGHT)
+            # Draw enemy helicopter
+            enemy_heli.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
+            # Draw bullets
+            for bullet in bullets:
+                bullet.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
+            # Draw player (always centered)
+            screen.blit(player.image, player.rect)
+            # Draw radar (after world, before UI)
+            draw_radar(screen, player.world_x, player.world_y, [enemy_heli], WIDTH, HEIGHT)
             # Display score
             score_text = font.render(f"Score: {score}", True, (255, 255, 255))
             screen.blit(score_text, (10, 10))
 
             if game_over and not show_gameover_menu:
-                name = show_score_entry_screen(score)
+                name, _ = show_score_entry_screen(screen, font, WIDTH, HEIGHT, score)
                 # Use 'Anonymous' if name is empty or only whitespace
                 add_score(name if name.strip() else "Anonymous", score)
                 show_gameover_menu = True
-
+                # Immediately break out of the inner game loop to return to the start screen
+                running = False
+                break
             if game_over and show_gameover_menu:
                 final_score = font.render(f"Your Score: {score}", True, (255, 255, 255))
                 screen.blit(final_score, (WIDTH // 2 - final_score.get_width() // 2, HEIGHT // 2 + 10))

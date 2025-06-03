@@ -3,6 +3,110 @@ import random
 import numpy as np
 import math
 
+def generate_rotor_sound(rotor_speed_func, volume=0.28, sample_rate=44100):
+    # Returns a function that manages a looping rotor sound, updating pitch with rotor_speed_func
+    class RotorSound:
+        def __init__(self):
+            self.sample_rate = sample_rate
+            self.duration = 1.0
+            self.volume = volume
+            self.sound = None
+            self.channel = None
+            self.last_rate = None
+            self.last_pitch = None
+        def set_volume(self, v):
+            self.volume = v
+            if self.channel:
+                self.channel.set_volume(v)
+        def _generate_whump(self, whumps_per_sec, pitch_shift=1.0):
+            t = np.linspace(0, self.duration, int(self.sample_rate * self.duration), False)
+            pulse = np.zeros_like(t)
+            whump_interval = int(self.sample_rate / whumps_per_sec)
+            base_freq = 55 * pitch_shift
+            for i in range(0, len(t), whump_interval):
+                whump_len = int(self.sample_rate * 0.07)
+                end = min(i + whump_len, len(t))
+                envelope = np.exp(-np.linspace(0, 3, end - i))
+                whump = 0.7 * np.sin(2 * np.pi * base_freq * t[i:end])
+                whump += 0.3 * np.random.normal(0, 0.7, end - i)
+                whump *= envelope
+                pulse[i:end] += whump
+            pulse = pulse / (np.max(np.abs(pulse)) + 1e-6)
+            pulse = (pulse * 32767 * self.volume).astype(np.int16)
+            if pulse.ndim == 1:
+                pulse = np.column_stack((pulse, pulse))
+            sound = pygame.sndarray.make_sound(pulse)
+            sound.set_volume(self.volume)
+            return sound
+        def play(self):
+            whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
+            self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
+            self.channel = self.sound.play(loops=-1)
+            self.last_rate = whumps_per_sec
+            self.last_pitch = pitch_shift
+        def update(self):
+            whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
+            if (abs(whumps_per_sec - (self.last_rate or 0)) > 0.1) or (abs(pitch_shift - (self.last_pitch or 1.0)) > 0.01):
+                if self.channel:
+                    self.channel.stop()
+                self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
+                self.channel = self.sound.play(loops=-1)
+                self.last_rate = whumps_per_sec
+                self.last_pitch = pitch_shift
+        def stop(self):
+            if self.channel:
+                self.channel.stop()
+                self.channel = None
+        def _calc_whumps_and_pitch(self):
+            rotor_speed = rotor_speed_func()  # deg/frame
+            fps = 60
+            revs_per_sec = (rotor_speed * fps) / 360.0
+            whumps_per_sec = max(1.5, min(8, revs_per_sec * 3))
+            pitch_shift = 1.0 + 0.25 * ((whumps_per_sec - 1.5) / (8 - 1.5))
+            return whumps_per_sec, pitch_shift
+        def set_pitch(self, pitch_shift):
+            # For compatibility: update pitch and restart sound if needed
+            whumps_per_sec, _ = self._calc_whumps_and_pitch()
+            if (abs(pitch_shift - (self.last_pitch or 1.0)) > 0.01):
+                if self.channel:
+                    self.channel.stop()
+                self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
+                self.channel = self.sound.play(loops=-1)
+                self.last_pitch = pitch_shift
+    return RotorSound()
+
+def generate_bullet_fire_sound(duration=0.18, freq=180, sample_rate=44100, volume=0.7):
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    envelope = np.exp(-8 * t)
+    wave = 0.7 * np.sin(2 * np.pi * freq * t) * envelope
+    wave += 0.3 * np.random.normal(0, 0.7, t.shape) * envelope
+    wave = (wave * 32767 * volume).astype(np.int16)
+    if wave.ndim == 1:
+        wave = np.column_stack((wave, wave))
+    return pygame.sndarray.make_sound(wave)
+
+def generate_explosion_sound(duration=0.3, sample_rate=44100, volume=0.5):
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    noise = np.random.normal(0, 1, t.shape)
+    envelope = np.exp(-5 * t)
+    wave = noise * envelope
+    wave = (wave * 32767 * volume).astype(np.int16)
+    if wave.ndim == 1:
+        wave = np.column_stack((wave, wave))
+    return pygame.sndarray.make_sound(wave)
+
+def generate_crash_sound(duration=0.5, sample_rate=44100, volume=0.7):
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    # A low, noisy thud with a sharp attack and slow decay
+    noise = np.random.normal(0, 1, t.shape)
+    envelope = np.exp(-6 * t)
+    thud = 0.7 * np.sin(2 * np.pi * 60 * t) * np.exp(-12 * t)
+    wave = (noise * 0.5 + thud) * envelope
+    wave = (wave * 32767 * volume).astype(np.int16)
+    if wave.ndim == 1:
+        wave = np.column_stack((wave, wave))
+    return pygame.sndarray.make_sound(wave)
+
 class EngineSound:
     def __init__(self, base_bpm=120, volume=0.25, duration=1.0, sample_rate=44100):
         self.base_bpm = base_bpm  # base 'whump' rate in beats per minute
@@ -63,139 +167,144 @@ class EngineSound:
             self.channel = None
             self.is_fast = False
 
-def generate_explosion_sound(duration=0.3, sample_rate=44100, volume=0.5):
-    t = np.linspace(0, duration, int(sample_rate * duration), False)
-    # White noise burst, envelope for fade out
-    noise = np.random.normal(0, 1, t.shape)
-    envelope = np.exp(-5 * t)
-    wave = noise * envelope
-    wave = (wave * 32767 * volume).astype(np.int16)
-    if wave.ndim == 1:
-        wave = np.column_stack((wave, wave))
-    return pygame.sndarray.make_sound(wave)
-
-def generate_bullet_fire_sound(duration=0.18, freq=180, sample_rate=44100, volume=0.7):
-    import numpy as np
-    t = np.linspace(0, duration, int(sample_rate * duration), False)
-    # Lower-pitched, percussive boom: sine + noise, fast decay
-    envelope = np.exp(-8 * t)
-    wave = 0.7 * np.sin(2 * np.pi * freq * t) * envelope
-    wave += 0.3 * np.random.normal(0, 0.7, t.shape) * envelope
-    wave = (wave * 32767 * volume).astype(np.int16)
-    if wave.ndim == 1:
-        wave = np.column_stack((wave, wave))
-    return pygame.sndarray.make_sound(wave)
-
-class Enemy(pygame.sprite.Sprite):
-    def __init__(self, width, height):
+class EnemyHelicopter(pygame.sprite.Sprite):
+    def __init__(self, player_world_x, player_world_y):
         super().__init__()
-        self.width = width
-        self.height = height
-        self.enemy_width = 40
-        self.enemy_height = 40
-        self.image = pygame.Surface((self.enemy_width, self.enemy_height), pygame.SRCALPHA)
-        pygame.draw.rect(self.image, (200, 0, 0), (0, 0, self.enemy_width, self.enemy_height), border_radius=8)
-        pygame.draw.rect(self.image, (255, 255, 0), (10, 10, 20, 20), border_radius=4)
-        self.rect = self.image.get_rect()
-        self.rect.x = random.randint(0, width - self.rect.width)
-        self.rect.y = random.randint(-150, -40)
-        self.speedy = random.randint(3, 7)
+        self.width = 60
+        self.height = 30
+        self.rotor_radius = max(self.width, self.height) * 1.2
+        self.rotor_diameter = int(self.rotor_radius * 2)
+        self.body_x = self.rotor_diameter // 2 - self.width // 2
+        self.body_y = self.rotor_diameter // 2 - self.height // 2
+        self.body_image = pygame.Surface((self.rotor_diameter, self.rotor_diameter), pygame.SRCALPHA)
+        pygame.draw.ellipse(self.body_image, (220, 40, 40), (self.body_x, self.body_y, self.width, self.height))
+        pygame.draw.rect(self.body_image, (180, 0, 0), (self.body_x + 40, self.body_y + 10, 15, 10), border_radius=3)
+        self.image = self.body_image.copy()
+        self.body_rect = pygame.Rect(self.body_x, self.body_y, self.width, self.height)
+        self.rect = self.body_rect.copy()
+        # Spawn at a random position offscreen
+        angle = random.uniform(0, 2 * math.pi)
+        dist = random.uniform(900, 1400)
+        self.world_x = player_world_x + math.cos(angle) * dist
+        self.world_y = player_world_y + math.sin(angle) * dist
+        self.angle = 0
+        self.speed = 4.5
+        self.rotor_angle = 0
+        self.rotor_speed = 18
+        self.fire_cooldown = 0
+        self.bullets = []
+        self.max_bullets = 1  # Fewer simultaneous bullets
+        self.bullet_speed = 13
+        self.bullet_cooldown_time = random.randint(90, 180)  # More sporadic fire (1.5-3s at 60fps)
+        self.rotor_sound = generate_rotor_sound(lambda: self.rotor_speed)
+        self.avoid_distance = self.width * 3.5 * 1.3  # 30% more space than before
+        self.circle_speed = 4.5
+        self.circle_dir = 1 if random.random() < 0.5 else -1  # Randomize circling direction
 
-    def update(self):
-        self.rect.y += self.speedy
-        if self.rect.top > self.height:
-            self.rect.y = random.randint(-100, -40)
-            self.rect.x = random.randint(0, self.width - self.rect.width)
+    def update(self, player_world_x, player_world_y):
+        # Aim at player
+        dx = player_world_x - self.world_x
+        dy = player_world_y - self.world_y
+        dist = math.hypot(dx, dy)
+        target_angle = math.degrees(math.atan2(-dy, dx))
+        # Smoothly rotate toward player
+        angle_diff = (target_angle - self.angle + 180) % 360 - 180
+        if abs(angle_diff) > 3:
+            self.angle += 3 * (1 if angle_diff > 0 else -1)
+        else:
+            self.angle = target_angle
+        self.angle %= 360
+        # --- Avoid collision and circle if too close ---
+        if dist < self.avoid_distance:
+            # Circle around the player at a fixed radius
+            # Calculate tangent direction (perpendicular to vector to player)
+            tangent_angle = math.atan2(-dy, dx) + self.circle_dir * math.pi / 2
+            move_angle = math.degrees(tangent_angle)
+            rad = math.radians(move_angle)
+            self.world_x += math.cos(rad) * self.circle_speed
+            self.world_y -= math.sin(rad) * self.circle_speed
+        else:
+            # Move toward player
+            rad = math.radians(self.angle)
+            self.world_x += math.cos(rad) * self.speed
+            self.world_y -= math.sin(rad) * self.speed
+        # Animate rotor
+        self.rotor_angle = (self.rotor_angle + self.rotor_speed) % 360
+        # Update rotor sound
+        self.rotor_sound.update()
+        # Fire at player if in range and cooldown is over
+        if self.fire_cooldown > 0:
+            self.fire_cooldown -= 1
+        elif dist < 1100 and len(self.bullets) < self.max_bullets:
+            self.fire_bullet()
+            # Randomize next cooldown for sporadic fire
+            self.bullet_cooldown_time = random.randint(90, 180)
+            self.fire_cooldown = self.bullet_cooldown_time
+        # Update bullets
+        for bullet in self.bullets[:]:
+            bullet.update()
+            if bullet.lifetime <= 0:
+                self.bullets.remove(bullet)
 
-class Bullet(pygame.sprite.Sprite):
-    def __init__(self, x, y, screen_width, angle, speed=16):
-        super().__init__()
+    def fire_bullet(self):
+        rad = math.radians(self.angle)
+        bx = self.world_x + math.cos(rad) * (self.width // 2)
+        by = self.world_y - math.sin(rad) * (self.height // 2)
+        self.bullets.append(EnemyBullet(bx, by, self.angle, self.bullet_speed))
+
+    def draw(self, screen, camera_x, camera_y, WIDTH, HEIGHT):
+        # Draw helicopter
+        self.image = self.body_image.copy()
+        center = (self.rotor_diameter // 2, self.rotor_diameter // 2)
+        blade_length = int(self.rotor_radius * 0.95)
+        blade_width = 8
+        blade_color = (60, 60, 60, 180)
+        for i in range(3):
+            angle = self.rotor_angle + i * 120
+            rad = math.radians(angle)
+            x2 = center[0] + math.cos(rad) * blade_length
+            y2 = center[1] + math.sin(rad) * blade_length
+            pygame.draw.line(self.image, blade_color, center, (x2, y2), blade_width)
+        self.image = pygame.transform.rotate(self.image, self.angle)
+        self.rect = self.image.get_rect(center=(int(self.world_x - camera_x + WIDTH // 2), int(self.world_y - camera_y + HEIGHT // 2)))
+        screen.blit(self.image, self.rect)
+        # Draw bullets
+        for bullet in self.bullets:
+            bullet.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
+
+    def distance_to(self, x, y):
+        return math.hypot(self.world_x - x, self.world_y - y)
+
+    def get_world_rect(self):
+        return pygame.Rect(self.world_x - self.width // 2, self.world_y - self.height // 2, self.width, self.height)
+
+class EnemyBullet:
+    def __init__(self, x, y, angle, speed=13):
         self.length = 16
         self.width = 4
-        # Draw the bullet as a horizontal line, then rotate to match angle
         base_image = pygame.Surface((self.length, self.width), pygame.SRCALPHA)
-        pygame.draw.rect(base_image, (255, 255, 0), (0, 0, self.length, self.width), border_radius=2)
-        # The bullet should point in the direction of travel, so rotate by -angle
+        pygame.draw.rect(base_image, (255, 80, 80), (0, 0, self.length, self.width), border_radius=2)
         self.image = pygame.transform.rotate(base_image, angle)
         self.rect = self.image.get_rect(center=(x, y))
-        self.screen_width = screen_width
         self.angle = angle
         self.speed = speed
-        # Calculate velocity components
         rad = math.radians(self.angle)
         self.vx = math.cos(rad) * self.speed
         self.vy = -math.sin(rad) * self.speed
+        self.world_x = x
+        self.world_y = y
+        self.lifetime = 120  # frames
 
     def update(self):
-        self.rect.x += self.vx
-        self.rect.y += self.vy
-        # Off-screen check (right, left, top, bottom)
-        if (
-            self.rect.right < 0 or self.rect.left > self.screen_width or
-            self.rect.bottom < 0 or self.rect.top > 2000  # 2000: generous for tall screens
-        ):
-            self.kill()
+        self.world_x += self.vx
+        self.world_y += self.vy
+        self.lifetime -= 1
 
-class RotorSound:
-    def __init__(self, get_rotor_speed, volume=0.28, sample_rate=44100):
-        self.get_rotor_speed = get_rotor_speed  # function returning current rotor_speed (deg/frame)
-        self.volume = volume
-        self.sample_rate = sample_rate
-        self.duration = 1.0  # seconds
-        self.sound = None
-        self.channel = None
-        self.last_rate = None
-        self.last_pitch = None
+    def draw(self, screen, camera_x, camera_y, WIDTH, HEIGHT):
+        screen_x = int(self.world_x - camera_x + WIDTH // 2)
+        screen_y = int(self.world_y - camera_y + HEIGHT // 2)
+        self.rect = self.image.get_rect(center=(screen_x, screen_y))
+        screen.blit(self.image, self.rect)
 
-    def _generate_whump(self, whumps_per_sec, pitch_shift=1.0):
-        t = np.linspace(0, self.duration, int(self.sample_rate * self.duration), False)
-        pulse = np.zeros_like(t)
-        whump_interval = int(self.sample_rate / whumps_per_sec)
-        base_freq = 55 * pitch_shift
-        for i in range(0, len(t), whump_interval):
-            whump_len = int(self.sample_rate * 0.07)
-            end = min(i + whump_len, len(t))
-            envelope = np.exp(-np.linspace(0, 3, end - i))
-            whump = 0.7 * np.sin(2 * np.pi * base_freq * t[i:end])
-            whump += 0.3 * np.random.normal(0, 0.7, end - i)
-            whump *= envelope
-            pulse[i:end] += whump
-        pulse = pulse / (np.max(np.abs(pulse)) + 1e-6)
-        pulse = (pulse * 32767 * self.volume).astype(np.int16)
-        if pulse.ndim == 1:
-            pulse = np.column_stack((pulse, pulse))
-        sound = pygame.sndarray.make_sound(pulse)
-        sound.set_volume(self.volume)
-        return sound
-
-    def play(self):
-        whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
-        self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
-        self.channel = self.sound.play(loops=-1)
-        self.last_rate = whumps_per_sec
-        self.last_pitch = pitch_shift
-
-    def update(self):
-        whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
-        if (abs(whumps_per_sec - (self.last_rate or 0)) > 0.1) or (abs(pitch_shift - (self.last_pitch or 1.0)) > 0.01):
-            if self.channel:
-                self.channel.stop()
-            self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
-            self.channel = self.sound.play(loops=-1)
-            self.last_rate = whumps_per_sec
-            self.last_pitch = pitch_shift
-
-    def stop(self):
-        if self.channel:
-            self.channel.stop()
-            self.channel = None
-
-    def _calc_whumps_and_pitch(self):
-        # 1 rotor revolution = 360 deg; 3 blades = 3 whumps per rev
-        rotor_speed = self.get_rotor_speed()  # deg/frame
-        fps = 60  # could be dynamic
-        revs_per_sec = (rotor_speed * fps) / 360.0
-        whumps_per_sec = max(1.5, min(8, revs_per_sec * 3))
-        # Pitch shift: 1.0 at idle, up to 1.25 at max whump rate
-        pitch_shift = 1.0 + 0.25 * ((whumps_per_sec - 1.5) / (8 - 1.5))
-        return whumps_per_sec, pitch_shift
+    def get_world_rect(self):
+        return pygame.Rect(self.world_x - self.length // 2, self.world_y - self.width // 2, self.length, self.width)
