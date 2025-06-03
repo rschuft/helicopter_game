@@ -110,8 +110,13 @@ class Enemy(pygame.sprite.Sprite):
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, screen_width, angle, speed=16):
         super().__init__()
-        self.image = pygame.Surface((16, 4), pygame.SRCALPHA)
-        pygame.draw.rect(self.image, (255, 255, 0), (0, 0, 16, 4), border_radius=2)
+        self.length = 16
+        self.width = 4
+        # Draw the bullet as a horizontal line, then rotate to match angle
+        base_image = pygame.Surface((self.length, self.width), pygame.SRCALPHA)
+        pygame.draw.rect(base_image, (255, 255, 0), (0, 0, self.length, self.width), border_radius=2)
+        # The bullet should point in the direction of travel, so rotate by -angle
+        self.image = pygame.transform.rotate(base_image, angle)
         self.rect = self.image.get_rect(center=(x, y))
         self.screen_width = screen_width
         self.angle = angle
