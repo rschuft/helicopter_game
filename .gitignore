@@ -194,5 +194,5 @@ cython_debug/
 .cursorindexingignore
 
 # Ignore local config files (but keep them tracked)
-/config/settings.json
-/config/leaderboard.json
+config/settings.json
+config/leaderboard.json
