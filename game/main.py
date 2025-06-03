@@ -66,7 +66,9 @@ def run():
         bullet_fire_sound = generate_bullet_fire_sound()
         explosion_sound = generate_explosion_sound()
         crash_sound = generate_crash_sound()
-        enemy_heli = EnemyHelicopter(player.world_x, player.world_y)
+        # --- ENEMY SYSTEM REFACTOR ---
+        # Use a list of enemies
+        enemies = [EnemyHelicopter(player.world_x, player.world_y)]
         bullets = []
         rotor_sound.play()
         running = True
@@ -109,7 +111,7 @@ def run():
                             player = Player(WIDTH // 2, HEIGHT // 2)
                             player.world_x = 0
                             player.world_y = 0
-                            enemy_heli = EnemyHelicopter(player.world_x, player.world_y)
+                            enemies = [EnemyHelicopter(player.world_x, player.world_y)]
                             bullets = []
                             score = 0
                             game_over = False
@@ -235,51 +237,68 @@ def run():
                         screen_y < -100 or screen_y > HEIGHT + 100
                     ):
                         bullets.remove(bullet)
-                # Update enemy helicopter
-                enemy_heli.update(player.world_x, player.world_y)
-            # Bullet-enemy collision (player bullets hit enemy heli)
-            hits = []
-            for bullet in bullets[:]:
-                if enemy_heli.get_world_rect().colliderect(bullet.get_world_rect()):
-                    hits.append(bullet)
-            for bullet in hits:
-                bullets.remove(bullet)
-                score += 1  # Score for hitting enemy heli
-                explosion_sound.play()  # Play explosion on bullet hit
-            # Enemy bullet hits player
-            player_rect = pygame.Rect(player.world_x - player.player_width // 2, player.world_y - player.player_height // 2, player.player_width, player.player_height)
-            for bullet in enemy_heli.bullets[:]:
-                if player_rect.colliderect(bullet.get_world_rect()):
-                    game_over = True
-                    rotor_sound.stop()
-                    crash_sound.play()  # Play crash sound on collision
-                    show_gameover_menu = False
-            # Enemy heli collides with player
-            if player_rect.colliderect(enemy_heli.get_world_rect()):
-                game_over = True
-                rotor_sound.stop()
-                crash_sound.play()  # Play crash sound on collision
-                show_gameover_menu = False
+                # Update all enemies
+                for enemy in enemies[:]:
+                    result = enemy.update(player.world_x, player.world_y, [e for e in enemies if e is not enemy])
+                    if result == 'remove':
+                        enemies.remove(enemy)
+                # --- Bullet-enemy collision (player bullets hit enemy heli) ---
+                hits = []
+                for bullet in bullets[:]:
+                    for enemy in enemies:
+                        if not getattr(enemy, 'crashing', False) and enemy.get_world_rect().colliderect(bullet.get_world_rect()):
+                            hits.append((bullet, enemy))
+                for bullet, enemy in hits:
+                    bullets.remove(bullet)
+                    score += 1
+                    explosion_sound.play()
+                    enemy.start_crash()
+                    # When enemy is hit, spawn 2 new enemies outside radar, paused
+                    avoid_positions = [(player.world_x, player.world_y)] + [(e.world_x, e.world_y) for e in enemies]
+                    for _ in range(2):
+                        new_enemy = EnemyHelicopter(player.world_x, player.world_y, spawn_outside_radar=True, radar_radius=3600, pause_time=FPS*10, avoid_positions=avoid_positions)
+                        enemies.append(new_enemy)
+                        avoid_positions.append((new_enemy.world_x, new_enemy.world_y))
+                # --- Enemy bullet hits player ---
+                player_rect = pygame.Rect(player.world_x - player.player_width // 2, player.world_y - player.player_height // 2, player.player_width, player.player_height)
+                for enemy in enemies:
+                    for bullet in enemy.bullets[:]:
+                        if player_rect.colliderect(bullet.get_world_rect()):
+                            game_over = True
+                            rotor_sound.stop()
+                            crash_sound.play()
+                            show_gameover_menu = False
+                # --- Enemy heli collides with player ---
+                for enemy in enemies:
+                    if player_rect.colliderect(enemy.get_world_rect()) and not getattr(enemy, 'crashing', False):
+                        game_over = True
+                        rotor_sound.stop()
+                        crash_sound.play()
+                        show_gameover_menu = False
             # Draw ground and trees (world background)
             draw_ground_and_trees(screen, camera_x, camera_y, WIDTH, HEIGHT)
-            # Draw enemy helicopter
-            enemy_heli.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
+            # Draw all enemies
+            for enemy in enemies:
+                enemy.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
             # Draw bullets
             for bullet in bullets:
                 bullet.draw(screen, camera_x, camera_y, WIDTH, HEIGHT)
             # Draw player (always centered)
             screen.blit(player.image, player.rect)
             # Draw radar (after world, before UI)
-            draw_radar(screen, player.world_x, player.world_y, [enemy_heli], WIDTH, HEIGHT)
+            draw_radar(screen, player.world_x, player.world_y, enemies, WIDTH, HEIGHT)
             # Display score
             score_text = font.render(f"Score: {score}", True, (255, 255, 255))
             screen.blit(score_text, (10, 10))
 
             if game_over and not show_gameover_menu:
-                name, _ = show_score_entry_screen(screen, font, WIDTH, HEIGHT, score)
+                name, result = show_score_entry_screen(screen, font, WIDTH, HEIGHT, score)
                 # Use 'Anonymous' if name is empty or only whitespace
                 add_score(name if name.strip() else "Anonymous", score)
                 show_gameover_menu = True
+                if result == 'quit':
+                    pygame.quit()
+                    return
                 # Immediately break out of the inner game loop to return to the start screen
                 running = False
                 break

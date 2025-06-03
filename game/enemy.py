@@ -168,7 +168,7 @@ class EngineSound:
             self.is_fast = False
 
 class EnemyHelicopter(pygame.sprite.Sprite):
-    def __init__(self, player_world_x, player_world_y):
+    def __init__(self, player_world_x, player_world_y, spawn_outside_radar=False, radar_radius=3600, pause_time=0, avoid_positions=None):
         super().__init__()
         self.width = 60
         self.height = 30
@@ -182,11 +182,28 @@ class EnemyHelicopter(pygame.sprite.Sprite):
         self.image = self.body_image.copy()
         self.body_rect = pygame.Rect(self.body_x, self.body_y, self.width, self.height)
         self.rect = self.body_rect.copy()
-        # Spawn at a random position offscreen
-        angle = random.uniform(0, 2 * math.pi)
-        dist = random.uniform(900, 1400)
-        self.world_x = player_world_x + math.cos(angle) * dist
-        self.world_y = player_world_y + math.sin(angle) * dist
+        # Spawn at a random position
+        if spawn_outside_radar:
+            angle = random.uniform(0, 2 * math.pi)
+            dist = radar_radius + 200 + random.uniform(0, 200)
+            # Avoid spawning too close to avoid_positions
+            if avoid_positions:
+                for _ in range(20):
+                    angle = random.uniform(0, 2 * math.pi)
+                    candidate_x = player_world_x + math.cos(angle) * dist
+                    candidate_y = player_world_y + math.sin(angle) * dist
+                    if all(math.hypot(candidate_x - x, candidate_y - y) > self.width * 5 for (x, y) in avoid_positions):
+                        break
+                self.world_x = candidate_x
+                self.world_y = candidate_y
+            else:
+                self.world_x = player_world_x + math.cos(angle) * dist
+                self.world_y = player_world_y + math.sin(angle) * dist
+        else:
+            angle = random.uniform(0, 2 * math.pi)
+            dist = random.uniform(900, 1400)
+            self.world_x = player_world_x + math.cos(angle) * dist
+            self.world_y = player_world_y + math.sin(angle) * dist
         self.angle = 0
         self.speed = 4.5
         self.rotor_angle = 0
@@ -200,14 +217,45 @@ class EnemyHelicopter(pygame.sprite.Sprite):
         self.avoid_distance = self.width * 3.5 * 1.3  # 30% more space than before
         self.circle_speed = 4.5
         self.circle_dir = 1 if random.random() < 0.5 else -1  # Randomize circling direction
+        self.crashing = False
+        self.crash_timer = 0
+        self.pause_time = pause_time  # frames to pause before pursuing
+        self.paused = pause_time > 0
 
-    def update(self, player_world_x, player_world_y):
+    def update(self, player_world_x, player_world_y, other_enemies=None):
+        if self.crashing:
+            self.crash_timer -= 1
+            self.world_y += 6  # Crash downward
+            self.rotor_angle = (self.rotor_angle + self.rotor_speed * 2) % 360
+            if self.crash_timer <= 0:
+                return 'remove'
+            return None
+        if self.paused:
+            self.pause_time -= 1
+            if self.pause_time <= 0:
+                self.paused = False
+            # Idle rotor animation
+            self.rotor_angle = (self.rotor_angle + self.rotor_speed) % 360
+            self.rotor_sound.update()
+            return None
         # Aim at player
         dx = player_world_x - self.world_x
         dy = player_world_y - self.world_y
         dist = math.hypot(dx, dy)
-        target_angle = math.degrees(math.atan2(-dy, dx))
+        # Avoid other enemies
+        if other_enemies:
+            for other in other_enemies:
+                if other is not self and not getattr(other, 'crashing', False):
+                    odx = other.world_x - self.world_x
+                    ody = other.world_y - self.world_y
+                    odist = math.hypot(odx, ody)
+                    if odist < self.avoid_distance:
+                        # Move away from other enemy
+                        angle_away = math.atan2(-ody, -odx)
+                        self.world_x += math.cos(angle_away) * 2
+                        self.world_y -= math.sin(angle_away) * 2
         # Smoothly rotate toward player
+        target_angle = math.degrees(math.atan2(-dy, dx))
         angle_diff = (target_angle - self.angle + 180) % 360 - 180
         if abs(angle_diff) > 3:
             self.angle += 3 * (1 if angle_diff > 0 else -1)
@@ -245,6 +293,12 @@ class EnemyHelicopter(pygame.sprite.Sprite):
             bullet.update()
             if bullet.lifetime <= 0:
                 self.bullets.remove(bullet)
+        return None
+
+    def start_crash(self):
+        self.crashing = True
+        self.crash_timer = 40  # frames for crash animation
+        self.rotor_sound.stop()
 
     def fire_bullet(self):
         rad = math.radians(self.angle)
