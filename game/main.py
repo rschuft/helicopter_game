@@ -260,7 +260,9 @@ def run():
                     keys[pygame.K_LEFT] or keys[pygame.K_RIGHT] or keys[pygame.K_UP] or keys[pygame.K_DOWN]
                     or keys[pygame.K_a] or keys[pygame.K_d] or keys[pygame.K_w] or keys[pygame.K_s]
                 )
-                engine_sound.set_pitch(moving)
+                # Use actual speed to set engine sound rate
+                fast = abs(player.speed) > 2.5
+                engine_sound.set_pitch(fast)
                 # Bullet-enemy collision
                 hits = pygame.sprite.groupcollide(enemies, bullets, True, True)
                 for _ in hits:

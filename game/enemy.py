@@ -4,47 +4,64 @@ import numpy as np
 import math
 
 class EngineSound:
-    def __init__(self, base_freq=80, move_freq=120, volume=0.2, duration=1.0, sample_rate=44100):
-        self.base_freq = base_freq
-        self.move_freq = move_freq
+    def __init__(self, base_bpm=120, volume=0.25, duration=1.0, sample_rate=44100):
+        self.base_bpm = base_bpm  # base 'whump' rate in beats per minute
         self.volume = volume
         self.duration = duration
         self.sample_rate = sample_rate
-        self.base_sound = self._generate_rumble(self.base_freq)
-        self.move_sound = self._generate_rumble(self.move_freq)
+        self.base_sound = self._generate_whump(self.base_bpm)
+        self.fast_sound = self._generate_whump(self.base_bpm * 1.5)
         self.channel = None
+        self.is_fast = False
 
-    def _generate_rumble(self, freq):
+    def _generate_whump(self, bpm):
+        # Whump: repeating low-passed thump (3-5 per second)
+        whump_freq = bpm / 60.0  # whumps per second
         t = np.linspace(0, self.duration, int(self.sample_rate * self.duration), False)
-        # Rumble: sum of two close sine waves for beating, plus noise
-        wave = 0.7 * np.sin(2 * np.pi * freq * t) + 0.3 * np.sin(2 * np.pi * (freq + 2) * t)
-        wave += 0.1 * np.random.normal(0, 1, t.shape)
-        wave = (wave * 32767 * self.volume).astype(np.int16)
-        # Ensure stereo output for the mixer (2D array)
-        if wave.ndim == 1:
-            wave = np.column_stack((wave, wave))
-        sound = pygame.sndarray.make_sound(wave)
+        # Make a pulse train: 1 for whump, 0 otherwise
+        pulse = np.zeros_like(t)
+        whump_interval = int(self.sample_rate / whump_freq)
+        for i in range(0, len(t), whump_interval):
+            # Each whump: short burst, then decay
+            whump_len = int(self.sample_rate * 0.07)  # 70ms per whump
+            end = min(i + whump_len, len(t))
+            envelope = np.exp(-np.linspace(0, 3, end - i))
+            # Low thump: sine + noise
+            whump = 0.7 * np.sin(2 * np.pi * 60 * t[i:end])
+            whump += 0.3 * np.random.normal(0, 0.7, end - i)
+            whump *= envelope
+            pulse[i:end] += whump
+        # Normalize
+        pulse = pulse / (np.max(np.abs(pulse)) + 1e-6)
+        pulse = (pulse * 32767 * self.volume).astype(np.int16)
+        if pulse.ndim == 1:
+            pulse = np.column_stack((pulse, pulse))
+        sound = pygame.sndarray.make_sound(pulse)
         sound.set_volume(self.volume)
         return sound
 
-    def play(self, moving=False):
+    def play(self, fast=False):
         if self.channel is None or not self.channel.get_busy():
             self.channel = self.base_sound.play(loops=-1)
-        self.set_pitch(moving)
+        self.set_pitch(fast)
 
-    def set_pitch(self, moving):
+    def set_pitch(self, fast):
+        # fast=True: use faster whump
         if self.channel is not None:
-            if moving:
+            if fast and not self.is_fast:
                 self.channel.stop()
-                self.channel = self.move_sound.play(loops=-1)
-            else:
+                self.channel = self.fast_sound.play(loops=-1)
+                self.is_fast = True
+            elif not fast and self.is_fast:
                 self.channel.stop()
                 self.channel = self.base_sound.play(loops=-1)
+                self.is_fast = False
 
     def stop(self):
         if self.channel is not None:
             self.channel.stop()
             self.channel = None
+            self.is_fast = False
 
 def generate_explosion_sound(duration=0.3, sample_rate=44100, volume=0.5):
     t = np.linspace(0, duration, int(sample_rate * duration), False)
