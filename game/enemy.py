@@ -130,3 +130,67 @@ class Bullet(pygame.sprite.Sprite):
             self.rect.bottom < 0 or self.rect.top > 2000  # 2000: generous for tall screens
         ):
             self.kill()
+
+class RotorSound:
+    def __init__(self, get_rotor_speed, volume=0.28, sample_rate=44100):
+        self.get_rotor_speed = get_rotor_speed  # function returning current rotor_speed (deg/frame)
+        self.volume = volume
+        self.sample_rate = sample_rate
+        self.duration = 1.0  # seconds
+        self.sound = None
+        self.channel = None
+        self.last_rate = None
+        self.last_pitch = None
+
+    def _generate_whump(self, whumps_per_sec, pitch_shift=1.0):
+        t = np.linspace(0, self.duration, int(self.sample_rate * self.duration), False)
+        pulse = np.zeros_like(t)
+        whump_interval = int(self.sample_rate / whumps_per_sec)
+        base_freq = 55 * pitch_shift
+        for i in range(0, len(t), whump_interval):
+            whump_len = int(self.sample_rate * 0.07)
+            end = min(i + whump_len, len(t))
+            envelope = np.exp(-np.linspace(0, 3, end - i))
+            whump = 0.7 * np.sin(2 * np.pi * base_freq * t[i:end])
+            whump += 0.3 * np.random.normal(0, 0.7, end - i)
+            whump *= envelope
+            pulse[i:end] += whump
+        pulse = pulse / (np.max(np.abs(pulse)) + 1e-6)
+        pulse = (pulse * 32767 * self.volume).astype(np.int16)
+        if pulse.ndim == 1:
+            pulse = np.column_stack((pulse, pulse))
+        sound = pygame.sndarray.make_sound(pulse)
+        sound.set_volume(self.volume)
+        return sound
+
+    def play(self):
+        whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
+        self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
+        self.channel = self.sound.play(loops=-1)
+        self.last_rate = whumps_per_sec
+        self.last_pitch = pitch_shift
+
+    def update(self):
+        whumps_per_sec, pitch_shift = self._calc_whumps_and_pitch()
+        if (abs(whumps_per_sec - (self.last_rate or 0)) > 0.1) or (abs(pitch_shift - (self.last_pitch or 1.0)) > 0.01):
+            if self.channel:
+                self.channel.stop()
+            self.sound = self._generate_whump(whumps_per_sec, pitch_shift)
+            self.channel = self.sound.play(loops=-1)
+            self.last_rate = whumps_per_sec
+            self.last_pitch = pitch_shift
+
+    def stop(self):
+        if self.channel:
+            self.channel.stop()
+            self.channel = None
+
+    def _calc_whumps_and_pitch(self):
+        # 1 rotor revolution = 360 deg; 3 blades = 3 whumps per rev
+        rotor_speed = self.get_rotor_speed()  # deg/frame
+        fps = 60  # could be dynamic
+        revs_per_sec = (rotor_speed * fps) / 360.0
+        whumps_per_sec = max(1.5, min(8, revs_per_sec * 3))
+        # Pitch shift: 1.0 at idle, up to 1.25 at max whump rate
+        pitch_shift = 1.0 + 0.25 * ((whumps_per_sec - 1.5) / (8 - 1.5))
+        return whumps_per_sec, pitch_shift

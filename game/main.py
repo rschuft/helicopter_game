@@ -3,7 +3,7 @@ import random
 import math
 from .settings import WIDTH, HEIGHT, FPS
 from .player import Player
-from .enemy import Enemy, EngineSound, Bullet, generate_explosion_sound, generate_bullet_fire_sound
+from .enemy import Enemy, RotorSound, Bullet, generate_explosion_sound, generate_bullet_fire_sound
 from .leaderboard import add_score, load_leaderboard
 
 def run():
@@ -107,8 +107,13 @@ def run():
             settings_clock.tick(30)
 
         # Game setup
-        engine_sound = EngineSound()
         player = Player(WIDTH // 2, HEIGHT // 2)
+        # RotorSound: pass a lambda that returns a rotor_speed that increases with motion
+        def get_dynamic_rotor_speed():
+            # Use a much higher multiplier for speed to make the whump rate very sensitive to motion
+            # Also, add a minimum base value so even small speeds have an effect
+            return player.rotor_speed + max(0.1, abs(player.speed)) * 120
+        rotor_sound = RotorSound(get_dynamic_rotor_speed)
         all_sprites = pygame.sprite.Group(player)
         enemies = pygame.sprite.Group()
         bullets = pygame.sprite.Group()
@@ -116,7 +121,7 @@ def run():
             enemy = Enemy(WIDTH, HEIGHT)
             all_sprites.add(enemy)
             enemies.add(enemy)
-        engine_sound.play()
+        rotor_sound.play()
         running = True
         score = 0
         game_over = False
@@ -165,10 +170,11 @@ def run():
             return name
 
         game_clock = pygame.time.Clock()
+        camera_x = 0
+        camera_y = 0
         while running:
             game_clock.tick(FPS)
-            if not game_over:
-                score += 1
+            # Remove: if not game_over: score += 1
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -178,15 +184,15 @@ def run():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and not game_over:
                     paused = not paused
                     if paused:
-                        engine_sound.stop()
+                        rotor_sound.stop()
                         pygame.mixer.stop()  # Stop all sound effects
                     else:
-                        engine_sound.play()
+                        rotor_sound.play()
                 if paused:
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         if pause_rect_resume.collidepoint(event.pos):
                             paused = False
-                            engine_sound.play()
+                            rotor_sound.play()
                         elif pause_rect_restart.collidepoint(event.pos):
                             running = False  # break to outer loop to restart
                             paused = False
@@ -252,17 +258,30 @@ def run():
 
             if not game_over:
                 keys = pygame.key.get_pressed()
+                # Save old camera position
+                old_camera_x, old_camera_y = camera_x, camera_y
+                # Calculate intended movement
+                prev_pos = player.pos.copy()
                 player.update(keys)
+                # The difference in player position is the world movement
+                dx = player.pos.x - prev_pos.x
+                dy = player.pos.y - prev_pos.y
+                # Move camera instead of player
+                camera_x += dx
+                camera_y += dy
+                # Keep player visually centered
+                player.pos.x = WIDTH // 2
+                player.pos.y = HEIGHT // 2
+                # Move all enemies and bullets by (-dx, -dy)
+                for enemy in enemies:
+                    enemy.rect.x -= dx
+                    enemy.rect.y -= dy
+                for bullet in bullets:
+                    bullet.rect.x -= dx
+                    bullet.rect.y -= dy
                 enemies.update()
                 bullets.update()
-                # Support both arrow keys and ASDW for engine sound pitch
-                moving = (
-                    keys[pygame.K_LEFT] or keys[pygame.K_RIGHT] or keys[pygame.K_UP] or keys[pygame.K_DOWN]
-                    or keys[pygame.K_a] or keys[pygame.K_d] or keys[pygame.K_w] or keys[pygame.K_s]
-                )
-                # Use actual speed to set engine sound rate
-                fast = abs(player.speed) > 2.5
-                engine_sound.set_pitch(fast)
+                rotor_sound.update()
                 # Bullet-enemy collision
                 hits = pygame.sprite.groupcollide(enemies, bullets, True, True)
                 for _ in hits:
@@ -271,6 +290,7 @@ def run():
                     enemy = Enemy(WIDTH, HEIGHT)
                     all_sprites.add(enemy)
                     enemies.add(enemy)
+                    score += 1  # Increase score only when an enemy is destroyed
                 # Use player.body_rect for collision, not player.rect
                 collided = False
                 for enemy in enemies:
@@ -279,15 +299,17 @@ def run():
                         break
                 if collided:
                     game_over = True
-                    engine_sound.stop()
+                    rotor_sound.stop()
                     show_gameover_menu = False
 
             # Draw grass tiles as green rectangles
             tile_size = 64
             grass_color = (34, 139, 34)
-            for x in range(0, WIDTH, tile_size):
-                for y in range(0, HEIGHT, tile_size):
-                    pygame.draw.rect(screen, grass_color, (x, y, tile_size, tile_size))
+            for x in range(-tile_size, WIDTH + tile_size, tile_size):
+                for y in range(-tile_size, HEIGHT + tile_size, tile_size):
+                    world_x = x + (camera_x % tile_size) - tile_size
+                    world_y = y + (camera_y % tile_size) - tile_size
+                    pygame.draw.rect(screen, grass_color, (world_x, world_y, tile_size, tile_size))
 
             all_sprites.draw(screen)
 
