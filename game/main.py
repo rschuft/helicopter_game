@@ -3,7 +3,7 @@ import random
 import math
 from .settings import WIDTH, HEIGHT, FPS
 from .player import Player
-from .enemy import EnemyTank, generate_rotor_sound, generate_bullet_fire_sound, generate_explosion_sound, generate_crash_sound
+from .enemy import EnemyTank, generate_rotor_sound, generate_bullet_fire_sound, generate_explosion_sound, generate_crash_sound, generate_damage_sound, generate_tank_fire_sound
 from .leaderboard import add_score, load_leaderboard
 from .menu import draw_main_menu
 from .ui import show_settings_screen
@@ -70,6 +70,8 @@ def run():
         bullet_fire_sound = generate_bullet_fire_sound()
         explosion_sound = generate_explosion_sound()
         crash_sound = generate_crash_sound()
+        damage_sound = generate_damage_sound()
+        tank_fire_sound = generate_tank_fire_sound()
         # --- ENEMY SYSTEM REFACTOR ---
         # Use a list of enemies (now tanks)
         enemies = [EnemyTank(player.world_x, player.world_y)]
@@ -98,6 +100,7 @@ def run():
         camera_y = player.world_y
         # --- Add this flag for in-game restart ---
         in_game_restart = False
+        sparks = []  # List of spark particles
         while running:
             game_clock.tick(FPS)
 
@@ -163,8 +166,12 @@ def run():
                         bullet = type('PlayerBullet', (), {})()
                         bullet.length = 16
                         bullet.width = 4
+                        # Create a gradient bullet: transparent at tip, fully opaque yellow at back
                         base_image = pygame.Surface((bullet.length, bullet.width), pygame.SRCALPHA)
-                        pygame.draw.rect(base_image, (255, 255, 0), (0, 0, bullet.length, bullet.width), border_radius=2)
+                        for i in range(bullet.length):
+                            alpha = int(255 * (i / bullet.length))
+                            color = (255, 255, 0, alpha)
+                            pygame.draw.line(base_image, color, (i, 0), (i, bullet.width-1))
                         bullet.image = pygame.transform.rotate(base_image, player.angle)
                         bullet.rect = bullet.image.get_rect(center=(world_bullet_x, world_bullet_y))
                         bullet.angle = player.angle
@@ -282,6 +289,21 @@ def run():
                         if player_rect.colliderect(bullet.get_world_rect()):
                             enemy.bullets.remove(bullet)
                             player_hearts -= 1
+                            damage_sound.play()
+                            # Spawn sparks
+                            for _ in range(12):
+                                angle = random.uniform(-0.7, 0.7)
+                                speed = random.uniform(6, 13)
+                                vx = math.cos(angle + math.pi/2) * speed
+                                vy = -abs(math.sin(angle + math.pi/2) * speed)
+                                sparks.append({
+                                    'x': player.world_x,
+                                    'y': player.world_y - 10,
+                                    'vx': vx,
+                                    'vy': vy,
+                                    'life': random.randint(10, 18),
+                                    'color': (255, random.randint(180,220), 60)
+                                })
                             if player_hearts <= 0:
                                 game_over = True
                                 rotor_sound.stop()
@@ -309,8 +331,18 @@ def run():
                 if i < player_hearts:
                     screen.blit(heart_img, (x, y))
                 else:
-                    # Draw empty heart (outline)
                     pygame.draw.polygon(screen, (120, 120, 120), [(x+16, y+28), (x+2, y+14), (x+8, y+4), (x+16, y+10), (x+24, y+4), (x+30, y+14)], 2)
+            # Draw sparks
+            for spark in sparks[:]:
+                sx = int(spark['x'] - camera_x + WIDTH // 2)
+                sy = int(spark['y'] - camera_y + HEIGHT // 2)
+                pygame.draw.circle(screen, spark['color'], (sx, sy), 3)
+                spark['x'] += spark['vx']
+                spark['y'] += spark['vy']
+                spark['vy'] += 1.2  # gravity
+                spark['life'] -= 1
+                if spark['life'] <= 0:
+                    sparks.remove(spark)
 
             if game_over and not show_gameover_menu:
                 pygame.mixer.stop()  # Stop all sounds

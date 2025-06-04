@@ -296,7 +296,8 @@ class TankBullet:
         self.width = 6
         base_image = pygame.Surface((self.length, self.width), pygame.SRCALPHA)
         pygame.draw.rect(base_image, (200, 255, 80), (0, 0, self.length, self.width), border_radius=2)
-        self.image = pygame.transform.rotate(base_image, angle)
+        # Fix orientation: rotate by angle-90 so the bullet points in the firing direction
+        self.image = pygame.transform.rotate(base_image, angle - 90)
         self.rect = self.image.get_rect(center=(x, y))
         self.angle = angle
         self.speed = speed
@@ -320,3 +321,26 @@ class TankBullet:
 
     def get_world_rect(self):
         return pygame.Rect(self.world_x - self.length // 2, self.world_y - self.width // 2, self.length, self.width)
+
+def generate_damage_sound(duration=0.22, freq=110, sample_rate=44100, volume=0.55):
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    envelope = np.exp(-7 * t)
+    # A metallic clang + static burst
+    wave = 0.6 * np.sin(2 * np.pi * freq * t) * envelope
+    wave += 0.5 * np.random.normal(0, 0.7, t.shape) * envelope * (1 - t / duration)
+    wave += 0.2 * np.sin(2 * np.pi * (freq * 2.7) * t) * envelope * (1 - t / duration)
+    wave = (wave * 32767 * volume).astype(np.int16)
+    if wave.ndim == 1:
+        wave = np.column_stack((wave, wave))
+    return pygame.sndarray.make_sound(wave)
+
+def generate_tank_fire_sound(duration=0.22, freq=60, sample_rate=44100, volume=0.7):
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    envelope = np.exp(-5 * t)
+    # Low boom: sine + noise
+    wave = 0.7 * np.sin(2 * np.pi * freq * t) * envelope
+    wave += 0.3 * np.random.normal(0, 0.5, t.shape) * envelope
+    wave = (wave * 32767 * volume).astype(np.int16)
+    if wave.ndim == 1:
+        wave = np.column_stack((wave, wave))
+    return pygame.sndarray.make_sound(wave)
